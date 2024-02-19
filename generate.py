@@ -1,3 +1,5 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 import numpy as np
 from network.model_trainer import DiffusionModel
@@ -5,7 +7,6 @@ from utils.mesh_utils import voxel2mesh
 from utils.utils import str2bool, ensure_directory
 from utils.utils import num_to_groups
 import argparse
-import os
 from tqdm import tqdm
 from utils.utils import VIT_MODEL, png_fill_color
 from PIL import Image
@@ -118,38 +119,41 @@ def generate_based_on_sketch(
     ensure_directory(root_dir)
     preprocess = _transform(224)
     device = "cuda"
-
+    # import pdb;pdb.set_trace()
     feature_extractor = timm.create_model(
-        VIT_MODEL, pretrained=True).to(device)
+        VIT_MODEL, pretrained=True,).to(device)
     with torch.no_grad():
+        
         im = Image.open(sketch_path)
         im = png_fill_color(im).convert("RGB")
         im.save(os.path.join(root_dir, "input.png"))
-        im = preprocess(im).unsqueeze(0).to(device)
-        image_features = feature_extractor.forward_features(im)
-        sketch_c = image_features.squeeze(0).cpu().numpy()
+        im = preprocess(im).unsqueeze(0).to(device)  # torch.Size([1, 3, 224, 224])
+        image_features = feature_extractor.forward_features(im)  # torch.Size([1, 257, 1280])
+        sketch_c = image_features.squeeze(0).cpu().numpy()  # (257, 1280)
 
     from utils.sketch_utils import Projection_List, Projection_List_zero
-    if detail_view:
+    if detail_view:  # false
         projection_matrix  = get_P_from_transform_matrix(
             create_random_pose(rotation=rotation, elevation=elevation))
-    elif view_information == -1:
+    elif view_information == -1:  # false
         projection_matrix = None
     else:
-        if discrete_diffusion.elevation_zero:
+        if discrete_diffusion.elevation_zero:  # false
 
             projection_matrix = Projection_List_zero[view_information]
-        else:
-            projection_matrix = Projection_List[view_information]
-    batches = num_to_groups(num_generate, 32)
+        else:  # choose
+            projection_matrix = Projection_List[view_information]  # (3, 4)
+    
+    batches = num_to_groups(num_generate, 32)  # [4]
     generator = discrete_diffusion.ema_model if ema else discrete_diffusion.model
     index = 0
     for batch in batches:
         res_tensor = generator.sample_with_sketch(sketch_c=sketch_c, batch_size=batch,
                                                   projection_matrix=projection_matrix, kernel_size=kernel_size,
                                                   steps=steps, truncated_index=truncated_time, sketch_w=w)
+        # res_tensor.Size([4, 1, 64, 64, 64])  res_tensor 是sdf
         for i in tqdm(range(batch), desc=f'save results in one batch in {root_dir}'):
-            voxel = res_tensor[i].squeeze().cpu().numpy()
+            voxel = res_tensor[i].squeeze().cpu().numpy()  # (64, 64, 64)
             np.save(os.path.join(root_dir, str(index)), voxel)
             # print(voxel)
             try:
